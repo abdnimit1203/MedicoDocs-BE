@@ -1,16 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
-import { env } from '../config/env';
-import { AuthenticatedUser } from '../types/express';
+import { getAuth } from '../config/firebaseAdmin';
 
-export function requireAuth(req: Request, res: Response, next: NextFunction): void {
+export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
-  
-  // Dev shortcut for testing user-isolation locally in development
-  if (process.env.NODE_ENV === 'development' && req.headers['x-dev-user-id']) {
+
+  // Development bypass helper if explicitly header-flagged in local dev testing
+  if (process.env.NODE_ENV === 'development' && req.headers['x-dev-user-id'] && !authHeader) {
     req.user = {
       uid: String(req.headers['x-dev-user-id']),
       email: String(req.headers['x-dev-user-email'] || 'devuser@medicodocs.local'),
+      name: String(req.headers['x-dev-user-name'] || 'Dev User'),
     };
     return next();
   }
@@ -26,9 +25,10 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, env.JWT_SECRET) as AuthenticatedUser;
-    
-    if (!decoded.uid) {
+    const auth = getAuth();
+    const decodedToken = await auth.verifyIdToken(token);
+
+    if (!decodedToken || !decodedToken.uid) {
       res.status(401).json({
         success: false,
         error: { message: 'Unauthorized: Invalid token payload missing user ID.' },
@@ -37,16 +37,17 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     }
 
     req.user = {
-      uid: decoded.uid,
-      email: decoded.email,
-      name: decoded.name,
+      uid: decodedToken.uid,
+      email: decodedToken.email || '',
+      name: decodedToken.name || '',
     };
 
     next();
-  } catch (error) {
+  } catch (error: any) {
+    console.error('Firebase token verification error:', error.message || error);
     res.status(401).json({
       success: false,
-      error: { message: 'Unauthorized: Token verification failed.' },
+      error: { message: 'Unauthorized: Token verification failed or expired.' },
     });
   }
 }
