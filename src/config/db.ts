@@ -20,7 +20,7 @@ if (!global.mongooseCache) {
 
 /**
  * Connects to MongoDB using a serverless-safe cached connection & in-flight promise pattern.
- * Includes automatic DNS fallback for Node.js SRV resolution on environments where local DNS refuses querySrv.
+ * Explicitly targets the exact database name 'MedicoDocs' (case-sensitive).
  */
 export async function connectDB(): Promise<typeof mongoose> {
   const mongoUri = env.MONGO_URI;
@@ -37,13 +37,14 @@ export async function connectDB(): Promise<typeof mongoose> {
   if (!cached.promise) {
     const opts = {
       bufferCommands: false,
+      dbName: 'MedicoDocs', // Target exact case-sensitive database name: MedicoDocs
     };
 
     cached.promise = mongoose
       .connect(mongoUri, opts)
       .then((m) => {
         if (process.env.NODE_ENV === 'development') {
-          console.log(`[Database] Connected successfully to host: ${m.connection.host}`);
+          console.log(`[Database] Connected successfully to db '${m.connection.name}' on host: ${m.connection.host}`);
         }
         return m;
       })
@@ -54,7 +55,7 @@ export async function connectDB(): Promise<typeof mongoose> {
             dns.setServers(['8.8.8.8', '1.1.1.1']);
             const fallbackConn = await mongoose.connect(mongoUri, opts);
             if (process.env.NODE_ENV === 'development') {
-              console.log(`[Database] Connected successfully with DNS fallback to host: ${fallbackConn.connection.host}`);
+              console.log(`[Database] Connected successfully with DNS fallback to db '${fallbackConn.connection.name}' on host: ${fallbackConn.connection.host}`);
             }
             return fallbackConn;
           } catch (fallbackErr) {

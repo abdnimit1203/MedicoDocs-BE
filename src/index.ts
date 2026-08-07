@@ -1,4 +1,4 @@
-import express, { Express } from 'express';
+import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -68,7 +68,20 @@ app.use('/api', limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Routes
+// Root welcome route for browser checks
+app.get('/', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    message: 'Welcome to MedicoDocs API Backend',
+    version: '1.0.0',
+    endpoints: {
+      health: '/api/health',
+      records: '/api/records',
+    },
+  });
+});
+
+// API Routes
 app.use('/api', healthRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/records', recordsRouter);
