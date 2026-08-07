@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit';
 import { env } from './config/env';
 import { errorHandler } from './middlewares/errorHandler';
 import healthRouter from './routes/health';
+import authRouter from './routes/auth';
 
 const app: Express = express();
 
@@ -48,6 +49,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Routes
 app.use('/api', healthRouter);
+app.use('/api/auth', authRouter);
 
 // Centralized error handling
 app.use(errorHandler);

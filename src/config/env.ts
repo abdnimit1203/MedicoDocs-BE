@@ -8,6 +8,7 @@ export const env = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:3000',
   MONGO_URI: process.env.MONGO_URI || '',
+  JWT_SECRET: process.env.JWT_SECRET || 'dev_secret_key_medicodocs_local',
 };
 
 export function validateRequiredEnv(requiredKeys: string[]) {
