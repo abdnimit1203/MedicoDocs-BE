@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import dns from 'dns';
 import { env } from './env';
 
 interface MongooseCache {
@@ -19,7 +20,7 @@ if (!global.mongooseCache) {
 
 /**
  * Connects to MongoDB using a serverless-safe cached connection & in-flight promise pattern.
- * Throws immediately if MONGO_URI environment variable is missing.
+ * Includes automatic DNS fallback for Node.js SRV resolution on environments where local DNS refuses querySrv.
  */
 export async function connectDB(): Promise<typeof mongoose> {
   const mongoUri = env.MONGO_URI;
@@ -32,24 +33,41 @@ export async function connectDB(): Promise<typeof mongoose> {
     return cached.conn;
   }
 
-  // 2. If no connection promise is in-flight, initiate a new connection promise
+  // 2. Initiate connection promise if not already in-flight
   if (!cached.promise) {
     const opts = {
       bufferCommands: false,
     };
 
-    cached.promise = mongoose.connect(mongoUri, opts).then((m) => {
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`[Database] Connected successfully to host: ${m.connection.host}`);
-      }
-      return m;
-    }).catch((err) => {
-      cached.promise = null; // Clear cached promise on error to allow retries
-      throw err;
-    });
+    cached.promise = mongoose
+      .connect(mongoUri, opts)
+      .then((m) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[Database] Connected successfully to host: ${m.connection.host}`);
+        }
+        return m;
+      })
+      .catch(async (err) => {
+        // Fallback DNS handling if Node c-ares DNS resolver returns ECONNREFUSED on querySrv
+        if (err && (err.code === 'ECONNREFUSED' || String(err.message).includes('querySrv ECONNREFUSED'))) {
+          try {
+            dns.setServers(['8.8.8.8', '1.1.1.1']);
+            const fallbackConn = await mongoose.connect(mongoUri, opts);
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[Database] Connected successfully with DNS fallback to host: ${fallbackConn.connection.host}`);
+            }
+            return fallbackConn;
+          } catch (fallbackErr) {
+            cached.promise = null;
+            throw fallbackErr;
+          }
+        }
+        cached.promise = null;
+        throw err;
+      });
   }
 
-  // 3. Await in-flight promise (handles concurrent invocations cleanly)
+  // 3. Await in-flight promise
   try {
     cached.conn = await cached.promise;
   } catch (e) {
