@@ -11,6 +11,9 @@
   "keywords": [],
   "author": "AB",
   "license": "ISC",
+  "overrides": {
+    "jose": "5.10.0"
+  },
   "dependencies": {
     "@google/genai": "^2.16.0",
     "cors": "^2.8.5",
