@@ -16,10 +16,11 @@
 
 * 🔐 **Firebase Admin Authentication Middleware:** Decodes and verifies Firebase Bearer JWT tokens on every protected route. Strictly isolates user records by `userId`.
 * 🤖 **Gemini AI Intelligence Service:** Powered by Google Gen AI SDK (`@google/genai` with `gemini-3.6-flash`). Features structured JSON schema definitions for:
-  * Medical Prescriptions (`analyzePrescriptionImage`)
+  * Medical Prescriptions (`analyzePrescriptionImage`) — including a structured `medicines[]` array (name, strength, frequency, duration, instructions)
   * Diagnostic Test Reports (`analyzeTestReportImage`)
+* 💬 **AI Medical Assistant:** `POST /api/assistant/chat` answers natural-language questions (English/Bangla/mixed) grounded **only** in the authenticated user's own stored records. Simple keyword-based relevance scoring selects just the records relevant to each question (with a token/record budget) instead of dumping full history into every prompt — no vector DB, no chat history persisted. Hard safety rules prevent inventing facts, treating uncertain/unreadable fields as confirmed, or recommending medication changes.
 * ⚡ **ImageKit Storage Integration:** Server-assisted authentication signature generation and Base64 CDN file uploads.
-* 🗄️ **MongoDB & Mongoose:** Multi-document type support (`visit`, `prescription`, `test_report`) with compound indexes for fast timeline sorting.
+* 🗄️ **MongoDB & Mongoose:** `prescription` / `test_report` document types (legacy `visit` records supported read-only via `src/scripts/migrateVisitRecords.ts`) with compound indexes, including an `effectiveDate` index for medical-date-first sorting.
 
 ---
 
@@ -79,6 +80,13 @@ npm run build
 | `POST` | `/api/records/analyze-prescription` | Gemini 3.6 Flash AI prescription extraction | Yes |
 | `POST` | `/api/records/analyze-test-report` | Gemini 3.6 Flash AI test report extraction | Yes |
 | `POST` | `/api/records/upload-image` | Upload image to ImageKit CDN | Yes |
+| `POST` | `/api/assistant/chat` | AI Medical Assistant — answers questions grounded in the user's own records only | Yes |
+
+---
+
+## 🧰 One-off Scripts
+
+* `npx tsx src/scripts/migrateVisitRecords.ts` — reclassifies legacy `documentType: 'visit'` records into `prescription`/`test_report` and backfills `effectiveDate`. Dry-run by default; pass `--commit` to write. Not run automatically.
 
 ---
 

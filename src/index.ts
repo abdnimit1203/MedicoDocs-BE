@@ -9,6 +9,7 @@ import { errorHandler } from './middlewares/errorHandler';
 import healthRouter from './routes/health';
 import authRouter from './routes/auth';
 import recordsRouter from './routes/records';
+import assistantRouter from './routes/assistant';
 
 const app: Express = express();
 app.set('trust proxy', 1);
@@ -92,6 +93,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/api', healthRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/records', recordsRouter);
+app.use('/api/assistant', assistantRouter);
 
 // Centralized error handling
 app.use(errorHandler);

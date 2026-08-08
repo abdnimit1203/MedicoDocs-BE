@@ -10,6 +10,17 @@ const router = Router();
 router.use(requireAuth);
 
 /**
+ * Computes the denormalized sort key: visitDate ?? prescriptionDate ?? now.
+ * Written once at create/update time so GET / can sort with a plain indexed
+ * field instead of recomputing a coalesce on every read.
+ */
+function computeEffectiveDate(visitDate?: string, prescriptionDate?: string): Date {
+  if (visitDate) return new Date(visitDate);
+  if (prescriptionDate) return new Date(prescriptionDate);
+  return new Date();
+}
+
+/**
  * POST /api/records/analyze-prescription
  * Gemini AI Prescription Image Analysis (Requires Auth)
  */
@@ -173,7 +184,7 @@ router.post('/upload-image', async (req: Request, res: Response): Promise<void> 
 
 /**
  * POST /api/records
- * Create a new medical record (Medical Visit, Prescription, or Test Report)
+ * Create a new medical record (Prescription or Test Report)
  */
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -190,6 +201,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       category,
       medicinesOrNotes,
       imageRef,
+      medicines,
       testName,
       labName,
       testsOrdered,
@@ -205,19 +217,29 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    if (documentType === 'visit') {
+      res.status(400).json({
+        success: false,
+        error: { message: "Visit records are no longer supported. Use 'prescription' or 'test_report'." },
+      });
+      return;
+    }
+
     const record = new MedicalRecord({
       userId,
       patientName: patientName.trim(),
       relationship: relationship || 'Self',
-      documentType: documentType || 'visit',
+      documentType: documentType || 'prescription',
       doctorName: doctorName ? String(doctorName).trim() : '',
       doctorSpecialty: doctorSpecialty ? String(doctorSpecialty).trim() : '',
       clinicLocation: clinicLocation ? String(clinicLocation).trim() : '',
       visitDate: visitDate ? new Date(visitDate) : null,
       prescriptionDate: prescriptionDate ? new Date(prescriptionDate) : null,
+      effectiveDate: computeEffectiveDate(visitDate, prescriptionDate),
       category: category ? String(category).trim() : 'General',
       medicinesOrNotes: medicinesOrNotes ? String(medicinesOrNotes).trim() : '',
       imageRef: imageRef || { url: '', thumbnail: '', dimensions: { width: 0, height: 0 } },
+      medicines: Array.isArray(medicines) ? medicines : [],
       testName: testName ? String(testName).trim() : '',
       labName: labName ? String(labName).trim() : '',
       testsOrdered: testsOrdered ? String(testsOrdered).trim() : '',
@@ -300,7 +322,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    const records = await MedicalRecord.find(filter).sort({ createdAt: -1 });
+    const records = await MedicalRecord.find(filter).sort({ effectiveDate: -1, createdAt: -1 });
 
     res.json({
       success: true,
@@ -363,12 +385,18 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
       category,
       medicinesOrNotes,
       imageRef,
+      medicines,
       testName,
       labName,
       testsOrdered,
       followUpDate,
       testResults,
     } = req.body;
+
+    // Note: unlike POST, PUT does not reject documentType === 'visit' — the frontend always
+    // echoes back a record's existing documentType on save, so rejecting here would block
+    // editing/re-saving any straggler pre-migration visit record. New visit records are
+    // already prevented at creation time (see the POST / handler above).
 
     const updateFields: any = {};
     if (patientName !== undefined) updateFields.patientName = String(patientName).trim();
@@ -379,9 +407,13 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
     if (clinicLocation !== undefined) updateFields.clinicLocation = String(clinicLocation).trim();
     if (visitDate !== undefined) updateFields.visitDate = visitDate ? new Date(visitDate) : null;
     if (prescriptionDate !== undefined) updateFields.prescriptionDate = prescriptionDate ? new Date(prescriptionDate) : null;
+    if (visitDate !== undefined || prescriptionDate !== undefined) {
+      updateFields.effectiveDate = computeEffectiveDate(visitDate, prescriptionDate);
+    }
     if (category !== undefined) updateFields.category = String(category).trim();
     if (medicinesOrNotes !== undefined) updateFields.medicinesOrNotes = String(medicinesOrNotes).trim();
     if (imageRef !== undefined) updateFields.imageRef = imageRef;
+    if (medicines !== undefined) updateFields.medicines = Array.isArray(medicines) ? medicines : [];
 
     if (testName !== undefined) updateFields.testName = String(testName).trim();
     if (labName !== undefined) updateFields.labName = String(labName).trim();
