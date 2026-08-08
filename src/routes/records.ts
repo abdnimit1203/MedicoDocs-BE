@@ -2,11 +2,76 @@ import { Router, Request, Response } from 'express';
 import ImageKit from 'imagekit';
 import { requireAuth } from '../middlewares/auth';
 import { MedicalRecord } from '../models/MedicalRecord';
+import { analyzePrescriptionImage, analyzeTestReportImage } from '../services/aiService';
 
 const router = Router();
 
 // All record routes require valid authentication
 router.use(requireAuth);
+
+/**
+ * POST /api/records/analyze-prescription
+ * Gemini AI Prescription Image Analysis (Requires Auth)
+ */
+router.post('/analyze-prescription', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { imageUrl, file } = req.body;
+    const imageInput = imageUrl || file;
+
+    if (!imageInput) {
+      res.status(400).json({
+        success: false,
+        error: { message: 'Image URL or base64 image data is required for AI analysis.' },
+      });
+      return;
+    }
+
+    const analysisResult = await analyzePrescriptionImage(imageInput);
+
+    res.json({
+      success: true,
+      data: analysisResult,
+    });
+  } catch (error: any) {
+    console.error('Prescription AI analysis route error:', error.message || error);
+    res.status(500).json({
+      success: false,
+      error: { message: error.message || 'Failed to analyze prescription with Gemini AI.' },
+    });
+  }
+});
+
+/**
+ * POST /api/records/analyze-test-report
+ * Gemini AI Diagnostic Test Report Analysis (Requires Auth)
+ */
+router.post('/analyze-test-report', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { imageUrl, file } = req.body;
+    const imageInput = imageUrl || file;
+
+    if (!imageInput) {
+      res.status(400).json({
+        success: false,
+        error: { message: 'Image URL or base64 image data is required for AI analysis.' },
+      });
+      return;
+    }
+
+    const analysisResult = await analyzeTestReportImage(imageInput);
+
+    res.json({
+      success: true,
+      data: analysisResult,
+    });
+  } catch (error: any) {
+    console.error('Test Report AI analysis route error:', error.message || error);
+    res.status(500).json({
+      success: false,
+      error: { message: error.message || 'Failed to analyze test report with Gemini AI.' },
+    });
+  }
+});
 
 /**
  * Helper to initialize ImageKit SDK using environment variables
@@ -30,7 +95,6 @@ function getImageKit(): ImageKit | null {
 /**
  * GET /api/records/imagekit-auth
  * Generate secure authentication signature for client-side ImageKit upload
- * (Requires authentication; private key stays on backend)
  */
 router.get('/imagekit-auth', (req: Request, res: Response): void => {
   try {
@@ -82,8 +146,8 @@ router.post('/upload-image', async (req: Request, res: Response): Promise<void> 
     }
 
     const uploadResponse = await ik.upload({
-      file, // base64 string or file URL
-      fileName: fileName || `prescription_${Date.now()}.jpg`,
+      file,
+      fileName: fileName || `medical_doc_${Date.now()}.jpg`,
       folder: `/medicodocs/user_${req.user!.uid}`,
     });
 
@@ -109,7 +173,7 @@ router.post('/upload-image', async (req: Request, res: Response): Promise<void> 
 
 /**
  * POST /api/records
- * Create a new medical record (userId strictly derived from req.user.uid)
+ * Create a new medical record (Medical Visit, Prescription, or Test Report)
  */
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -117,6 +181,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     const {
       patientName,
       relationship,
+      documentType,
       doctorName,
       doctorSpecialty,
       clinicLocation,
@@ -125,6 +190,11 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       category,
       medicinesOrNotes,
       imageRef,
+      testName,
+      labName,
+      testsOrdered,
+      followUpDate,
+      testResults,
     } = req.body;
 
     if (!patientName || typeof patientName !== 'string' || !patientName.trim()) {
@@ -139,6 +209,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       userId,
       patientName: patientName.trim(),
       relationship: relationship || 'Self',
+      documentType: documentType || 'visit',
       doctorName: doctorName ? String(doctorName).trim() : '',
       doctorSpecialty: doctorSpecialty ? String(doctorSpecialty).trim() : '',
       clinicLocation: clinicLocation ? String(clinicLocation).trim() : '',
@@ -147,6 +218,11 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       category: category ? String(category).trim() : 'General',
       medicinesOrNotes: medicinesOrNotes ? String(medicinesOrNotes).trim() : '',
       imageRef: imageRef || { url: '', thumbnail: '', dimensions: { width: 0, height: 0 } },
+      testName: testName ? String(testName).trim() : '',
+      labName: labName ? String(labName).trim() : '',
+      testsOrdered: testsOrdered ? String(testsOrdered).trim() : '',
+      followUpDate: followUpDate ? new Date(followUpDate) : null,
+      testResults: Array.isArray(testResults) ? testResults : [],
     });
 
     await record.save();
@@ -171,12 +247,16 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.user!.uid;
-    const { relationship, category, doctor, search, year, month } = req.query;
+    const { relationship, category, documentType, doctor, search, year, month } = req.query;
 
     const filter: any = { userId };
 
     if (relationship && relationship !== 'All') {
       filter.relationship = String(relationship);
+    }
+
+    if (documentType && documentType !== 'All') {
+      filter.documentType = String(documentType);
     }
 
     if (category && category !== 'All') {
@@ -193,40 +273,34 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
         { patientName: searchRegex },
         { doctorName: searchRegex },
         { doctorSpecialty: searchRegex },
-        { category: searchRegex },
-        { medicinesOrNotes: searchRegex },
         { clinicLocation: searchRegex },
+        { medicinesOrNotes: searchRegex },
+        { category: searchRegex },
+        { testName: searchRegex },
+        { labName: searchRegex },
       ];
     }
 
     if (year) {
       const yearNum = parseInt(String(year), 10);
       if (!isNaN(yearNum)) {
-        let startDate: Date;
-        let endDate: Date;
+        const startOfYear = new Date(Date.UTC(yearNum, 0, 1));
+        const endOfYear = new Date(Date.UTC(yearNum, 11, 31, 23, 59, 59, 999));
 
-        if (month !== undefined && month !== 'All') {
+        if (month && month !== 'All') {
           const monthNum = parseInt(String(month), 10);
-          const actualMonth = monthNum >= 1 && monthNum <= 12 ? monthNum - 1 : 0;
-          startDate = new Date(yearNum, actualMonth, 1);
-          endDate = new Date(yearNum, actualMonth + 1, 0, 23, 59, 59, 999);
+          if (!isNaN(monthNum) && monthNum >= 1 && monthNum <= 12) {
+            const startOfMonth = new Date(Date.UTC(yearNum, monthNum - 1, 1));
+            const endOfMonth = new Date(Date.UTC(yearNum, monthNum, 0, 23, 59, 59, 999));
+            filter.createdAt = { $gte: startOfMonth, $lte: endOfMonth };
+          }
         } else {
-          startDate = new Date(yearNum, 0, 1);
-          endDate = new Date(yearNum, 11, 31, 23, 59, 59, 999);
+          filter.createdAt = { $gte: startOfYear, $lte: endOfYear };
         }
-
-        filter.$and = filter.$and || [];
-        filter.$and.push({
-          $or: [
-            { visitDate: { $gte: startDate, $lte: endDate } },
-            { prescriptionDate: { $gte: startDate, $lte: endDate } },
-            { createdAt: { $gte: startDate, $lte: endDate } },
-          ],
-        });
       }
     }
 
-    const records = await MedicalRecord.find(filter).sort({ visitDate: -1, createdAt: -1 });
+    const records = await MedicalRecord.find(filter).sort({ createdAt: -1 });
 
     res.json({
       success: true,
@@ -253,7 +327,7 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
     if (!record) {
       res.status(404).json({
         success: false,
-        error: { message: 'Record not found or access denied.' },
+        error: { message: 'Medical record not found or unauthorized.' },
       });
       return;
     }
@@ -263,10 +337,10 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
       data: record,
     });
   } catch (error: any) {
-    console.error('Error fetching single record:', error.message || error);
-    res.status(404).json({
+    console.error('Error fetching record by id:', error.message || error);
+    res.status(500).json({
       success: false,
-      error: { message: 'Record not found or invalid ID.' },
+      error: { message: 'Failed to fetch record details.' },
     });
   }
 });
@@ -277,20 +351,10 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
 router.put('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.user!.uid;
-
-    const record = await MedicalRecord.findOne({ _id: req.params.id, userId });
-
-    if (!record) {
-      res.status(404).json({
-        success: false,
-        error: { message: 'Record not found or access denied.' },
-      });
-      return;
-    }
-
     const {
       patientName,
       relationship,
+      documentType,
       doctorName,
       doctorSpecialty,
       clinicLocation,
@@ -299,33 +363,55 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
       category,
       medicinesOrNotes,
       imageRef,
+      testName,
+      labName,
+      testsOrdered,
+      followUpDate,
+      testResults,
     } = req.body;
 
-    if (patientName !== undefined) record.patientName = String(patientName).trim();
-    if (relationship !== undefined) record.relationship = relationship;
-    if (doctorName !== undefined) record.doctorName = String(doctorName).trim();
-    if (doctorSpecialty !== undefined) record.doctorSpecialty = String(doctorSpecialty).trim();
-    if (clinicLocation !== undefined) record.clinicLocation = String(clinicLocation).trim();
-    if (visitDate !== undefined) record.visitDate = visitDate ? new Date(visitDate) : undefined;
-    if (prescriptionDate !== undefined)
-      record.prescriptionDate = prescriptionDate ? new Date(prescriptionDate) : undefined;
-    if (category !== undefined) record.category = String(category).trim();
-    if (medicinesOrNotes !== undefined) record.medicinesOrNotes = String(medicinesOrNotes).trim();
-    if (imageRef !== undefined) record.imageRef = { ...record.imageRef, ...imageRef };
+    const updateFields: any = {};
+    if (patientName !== undefined) updateFields.patientName = String(patientName).trim();
+    if (relationship !== undefined) updateFields.relationship = relationship;
+    if (documentType !== undefined) updateFields.documentType = documentType;
+    if (doctorName !== undefined) updateFields.doctorName = String(doctorName).trim();
+    if (doctorSpecialty !== undefined) updateFields.doctorSpecialty = String(doctorSpecialty).trim();
+    if (clinicLocation !== undefined) updateFields.clinicLocation = String(clinicLocation).trim();
+    if (visitDate !== undefined) updateFields.visitDate = visitDate ? new Date(visitDate) : null;
+    if (prescriptionDate !== undefined) updateFields.prescriptionDate = prescriptionDate ? new Date(prescriptionDate) : null;
+    if (category !== undefined) updateFields.category = String(category).trim();
+    if (medicinesOrNotes !== undefined) updateFields.medicinesOrNotes = String(medicinesOrNotes).trim();
+    if (imageRef !== undefined) updateFields.imageRef = imageRef;
 
-    record.userId = userId;
+    if (testName !== undefined) updateFields.testName = String(testName).trim();
+    if (labName !== undefined) updateFields.labName = String(labName).trim();
+    if (testsOrdered !== undefined) updateFields.testsOrdered = String(testsOrdered).trim();
+    if (followUpDate !== undefined) updateFields.followUpDate = followUpDate ? new Date(followUpDate) : null;
+    if (testResults !== undefined) updateFields.testResults = Array.isArray(testResults) ? testResults : [];
 
-    await record.save();
+    const record = await MedicalRecord.findOneAndUpdate(
+      { _id: req.params.id, userId },
+      { $set: updateFields },
+      { new: true, runValidators: true }
+    );
+
+    if (!record) {
+      res.status(404).json({
+        success: false,
+        error: { message: 'Medical record not found or unauthorized.' },
+      });
+      return;
+    }
 
     res.json({
       success: true,
       data: record,
     });
   } catch (error: any) {
-    console.error('Error updating record:', error.message || error);
+    console.error('Error updating medical record:', error.message || error);
     res.status(500).json({
       success: false,
-      error: { message: 'Failed to update record.' },
+      error: { message: 'Failed to update medical record.' },
     });
   }
 });
@@ -336,13 +422,12 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
 router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.user!.uid;
+    const record = await MedicalRecord.findOneAndDelete({ _id: req.params.id, userId });
 
-    const result = await MedicalRecord.findOneAndDelete({ _id: req.params.id, userId });
-
-    if (!result) {
+    if (!record) {
       res.status(404).json({
         success: false,
-        error: { message: 'Record not found or access denied.' },
+        error: { message: 'Medical record not found or unauthorized.' },
       });
       return;
     }
@@ -352,7 +437,7 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
       message: 'Medical record deleted successfully.',
     });
   } catch (error: any) {
-    console.error('Error deleting record:', error.message || error);
+    console.error('Error deleting medical record:', error.message || error);
     res.status(500).json({
       success: false,
       error: { message: 'Failed to delete medical record.' },

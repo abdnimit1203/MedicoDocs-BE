@@ -9,6 +9,7 @@ export const env = {
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:3000',
   MONGO_URI: process.env.MONGO_URI || '',
   JWT_SECRET: process.env.JWT_SECRET || 'dev_secret_key_medicodocs_local',
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
 };
 
 export function validateRequiredEnv(requiredKeys: string[]) {
